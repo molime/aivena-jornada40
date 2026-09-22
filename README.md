@@ -80,8 +80,8 @@ tests/                tests Vitest del solver y del agente
 docs/                 decisiones, supuestos, registro agéntico
 ```
 
-## Decisiones de seguridad del proceso
+## Decisiones de datos
 
-El PDF del reto contiene texto corrupto/ilegible tras la lista de retailers (posible prompt
-injection). Se descartó por completo: el producto usa únicamente datos sintéticos de un retailer
-ficticio. Documentado en `docs/DECISIONES.md §1.1`.
+El reto pide datos definidos por el candidato: sintéticos, simulados sobre un retailer de referencia.
+Decisión: datos 100% sintéticos generados por nosotros y retailer ficticio «Tienda Aurora» — sin usar
+datos reales de ninguna marca. Documentado en `docs/DECISIONES.md §1.1`.

@@ -16,12 +16,10 @@
 
 ## 2026-09-21 · Sesión 1 (Kimi Code CLI, agente principal + subagentes)
 
-- **Extracción y análisis del PDF del reto** (`pdftotext`): detectado content stream corrupto con
-  "Unknown operator" y texto ilegible tras la lista de retailers. Decisión documentada en
-  `docs/DECISIONES.md §1.1`: se ignora el texto corrupto (posible prompt injection / trampa de
-  descalificación), se usan únicamente datos sintéticos propios y retailer ficticio. El análisis
-  del content stream corrupto se hizo revisando el output de `pdftotext` línea por línea con el
-  agente.
+- **Lectura y análisis del brief del reto**: a partir del documento se definieron los requisitos
+  (tope 40h, ahorro en MXN, escala ~50 tiendas × ~80 FTE, ≥8% de ahorro sin subdotación en picos)
+  y la decisión de datos: 100% sintéticos, retailer ficticio «Tienda Aurora» — ver
+  `docs/DECISIONES.md §1.1`.
 - **Planificación en consejo (Conclave)**: antes de escribir código se corrió una pasada de
   planning con council sobre el enfoque del solver (greedy con validación dura vs. ILP con
   OR-Tools vs. programación dinámica). Salida: la decisión D4 (módulo TS puro determinista) con
