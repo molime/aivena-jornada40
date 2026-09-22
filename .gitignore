@@ -47,3 +47,4 @@ prisma/dev.db-journal
 # private docs (local-only, not for the repo)
 docs/PREPARACION-DEMO.md
 docs/DEPLOY.md
+docs/ASISTENTE-CALL.md
