@@ -44,7 +44,7 @@ legal/ético de usar datos de marcas reales. Se documenta aquí como evidencia d
 | # | Decisión | Elección | Razón |
 |---|----------|----------|-------|
 | D1 | Framework | **Next.js 15 (App Router) + TypeScript** | SSR/SSO en un solo proceso, despliegue trivial (Vercel/Node), un solo repo reproducible con `npm install && npm run db:setup && npm run dev`. |
-| D2 | Base de datos | **SQLite vía Prisma ORM** | Cero infraestructura; el reto pide reproducibilidad "sin ti". Prisma da migraciones versionadas y tipos. En producción escalaría a Postgres cambiando solo el provider. |
+| D2 | Base de datos | **SQLite vía Prisma 6 LTS (ORM)** | Cero infraestructura; el reto pide reproducibilidad "sin ti". Migraciones/DB push versionados y tipos. Se fijó Prisma **6.19** en vez de 7: el cliente 7 (query compiler + driver adapters obligatorios) rompe el flujo documentado con Better Auth y añade riesgo sin valor en la deadline; el upgrade es solo de paquete, sin cambios de schema. En producción escalaría a Postgres cambiando solo el provider. |
 | D3 | Auth | **Better Auth** (open source, requerido) | Email + password, sesiones seguras, plugin admin. Usuario demo sembrado. Todo el flujo corre local sin servicios externos. |
 | D4 | Solver de horarios | **Módulo TypeScript puro** (`src/lib/solver/`) | Sin dependencias de ILP/solvers nativos (reproducibilidad en Windows/Mac/Linux sin binarios). Algoritmo: cubrir demanda horaria con turnos de 4/6/8h, asignación greedy + reparación, con validación de restricciones dura. 100% unit-testeable. |
 | D5 | UI | Tailwind CSS + componentes propios ligeros, gráficas SVG hechas a mano | Evitar dependencia de librerías de charts pesadas; control total del render de la rejilla de turnos. |
@@ -52,10 +52,14 @@ legal/ético de usar datos de marcas reales. Se documenta aquí como evidencia d
 | D7 | Datos | Generador sintético determinista (seed fijo) | Trafico por hora/día con patrón retail realista (picos mediodía y sábado), salarios por rol, plantilla por tienda. Caso demo: 3 tiendas × ~15 empleados (escala visual para demo); el modelo soporta 50×80 sin cambios. |
 | D8 | Costos | Tarifa por rol (MXN/hora); horas extra (>40h) ×1.5; prima dominical ×1.25 sobre horas trabajadas el domingo | Aproximación conservadora y explicable ante un CFO; supuestos visibles en UI y en `docs/SUPUESTOS.md`. |
 | D9 | Trazabilidad | Tabla `ConstraintTrace` + página dedicada | Cada restricción aplicada por el solver queda registrada con su fuente (reforma LFT art. 61/69, regla operativa, regla de negocio) — es la "nota de trazabilidad de restricciones" que pide el reto. |
+| D10 | Asistente IA opcional ("Aurora") | **LLM estándar (OpenAI-compatible) + tool calls + Jev (TypeSafe "System One") como tool gate** | Capa conversacional para la demo con el CFO: el LLM solo *interpreta* datos reales vía herramientas (nunca asigna turnos); **Jev** —modelo clasificador, no generativo— decide si una tool call propuesta es riesgosa antes de ejecutarla (pattern "Tool Gate" de [LangChain](https://www.langchain.com/blog/building-a-harness-with-jev)). Sin `TYPESAFE_API_KEY` aplica política conservadora (escrituras siempre piden confirmación). Degradación graceful sin keys (mismo patrón que `front-desk-assignment`): el core funciona 100% sin IA. El solver (D4) permanece determinista e innegociable. |
+| D11 | Design system | **Tema «Aivena» oscuro sobre Tailwind 4, tokens extraídos de aivena.ai, gráficas SVG propias, sidebar SaaS** | Para que se perciba como producto vendible (no demo): paleta real de la marca (acento ámbar `#F5A623`, neutros oscuros `#0A0A0C`–`#37373F`), tipografía IBM Plex Sans/Mono, layout de aplicación con sidebar + topbar, kit de gráficas sin dependencias. La UI sigue siendo Server Components salvo islas interactivas (primitivas con handlers, gráficas, formularios). |
+| D12 | Flujo de aprobación + historial | **Estado `DRAFT → APPROVED → PUBLISHED` (+`ARCHIVED`) en `ScheduleRun`, historial persistente, CSV export** | Un producto de workforce no "reemplaza" la programación al re-correr: propone (Borrador), la aprueba gerencia, la publica al equipo (despublicando la anterior) y conserva historial. Export CSV para el tablero de tienda. Es el ciclo operativo que un Director de Operaciones espera. |
 
 Alternativas consideradas y descartadas: OR-Tools/GLPK (binarios nativos, fricción de instalación),
 Supabase/Postgres cloud (requiere cuenta/credenciales externas → menos reproducible), TanStack Start
-(menor madurez que Next para esta deadline), monorepo (sobreingeniería para 7 días).
+(menor madurez que Next para esta deadline), monorepo (sobreingeniería para 7 días), librerías de
+charts (recharts/d3) — el kit SVG propio (D5/D11) cubre área/barras/dona sin peso ni deps.
 
 ---
 
@@ -97,18 +101,21 @@ aivena-jornada40/
 ├── prisma/
 │   ├── schema.prisma
 │   └── seed.ts
-├── scripts/               # helpers (verificación de ahorro)
+├── scripts/               # verify.ts (verificación de ahorro sin DB)
 ├── src/
-│   ├── app/               # routes App Router: login, dashboard, tiendas, programación, restricciones
-│   ├── components/        # UI ligeros (Kpi, ScheduleGrid, DemandChart, Nav)
+│   ├── app/               # routes App Router: login, dashboard, tiendas, programación,
+│   │                      # restricciones, api/auth (Better Auth), api/schedule/run, api/chat
+│   ├── components/        # UI ligeros (Kpi, ScheduleGrid, DemandChart, Nav, ChatPanel)
 │   ├── lib/
 │   │   ├── auth.ts        # Better Auth config + handlers
 │   │   ├── db.ts          # Prisma client singleton
 │   │   ├── cost.ts        # motor de costos MXN
 │   │   ├── solver/        # solver puro: demand.ts, shifts.ts, assign.ts, index.ts, types.ts
 │   │   └── seed-data.ts   # generador sintético determinista
-│   └── server/            # sesión, guards de rutas, acciones del solver
-└── tests/solver/          # Vitest
+│   ├── server/            # sesión, guards, orquestador del solver y
+│   │   ├── chat/          # asistente IA: agent.ts (bucle), tools.ts, llm.ts, jev.ts
+│   └── ...
+└── tests/                 # tests/solver (núcleo) + tests/chat (fakeLlm, tool gate)
 ```
 
 ---
@@ -123,6 +130,16 @@ aivena-jornada40/
 - **Etapa 5 — UI de producto**: dashboard, tiendas, rejilla, restricciones. ✅
 - **Etapa 6 — Verificación E2E**: build, seed, run del solver, smoke test con credenciales demo. ✅
 - **Etapa 7 — Evidencia**: docs finales, supuestos, registro agéntico, README. ✅
+
+### 4.1 Ajustes durante la implementación (decisiones en caliente)
+
+- **Better Auth / seed del usuario demo**: el provider `credential` exige `account.accountId == user.id`
+  (no el email). Se corrigió seed y se verificó con sign-in real E2E.
+- **Escala de la curva de tráfico**: en el modo 50 tiendas × 80 FTE la demanda escala con la
+  plantilla (`employeesPerStore/15`); sin ello el ahorro quedaba artificialmente inflado (87.8%).
+  Con el ajuste: 30.7% (demo) y 35.6% (escala completa), ambos creíbles ante un CFO.
+- **Desglose del ahorro**: se persisten las tres componentes (h.extra, sobrestaffing, prima
+  dominical) en `ScheduleRun` para que la UI no reconstruya números.
 
 ---
 

@@ -1,0 +1,181 @@
+// Prisma schema — JORNADA40
+// SQLite en dev (reproducible sin infraestructura); en producción basta cambiar el provider.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Better Auth (modelos requeridos por el plugin) ----------
+
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+}
+
+model Session {
+  id        String   @id
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                    String    @id
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([providerId, accountId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// ---------- Dominio ----------
+
+model Store {
+  id        String  @id @default(cuid())
+  name      String
+  city      String
+  openHour  Int     @default(9)
+  closeHour Int     @default(21)
+  active    Boolean @default(true)
+  // Configuración operativa por tienda (ajustable en Ajustes)
+  serviceRate Float @default(12) // clientes atendidos por empleado·hora
+  minStaff    Int   @default(2)  // mínimo operativo en piso
+  employees Employee[]
+  traffic   TrafficHour[]
+  sales     HistoricalSale[]
+  runs      ScheduleRun[]
+}
+
+model Employee {
+  id         String  @id @default(cuid())
+  code       String
+  name       String
+  role       String
+  hourlyRate Float // MXN/hora
+  active     Boolean @default(true)
+  storeId    String
+  store      Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  baselineShifts BaselineShift[]
+  proposedShifts ProposedShift[]
+
+  @@unique([storeId, code])
+}
+
+// Tráfico sintético: clientes/hora por tienda x día de la semana (0=lun..6=dom) x hora (0-23)
+model TrafficHour {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  day     Int
+  hour    Int
+  traffic Int
+
+  @@unique([storeId, day, hour])
+}
+
+// Ventas históricas promedio por tienda x día de la semana (MXN)
+model HistoricalSale {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  day     Int
+  amount  Float
+
+  @@unique([storeId, day])
+}
+
+// Programación ACTUAL (línea base de costo): turnos fijos con sobre-dotación y horas extra
+model BaselineShift {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  day        Int
+  startHour  Int
+  hours      Int
+}
+
+// Ejecución del solver por tienda. Flujo de vida real:
+//   DRAFT (propuesta generada) -> APPROVED (aprobada por el gerente) -> PUBLISHED (publicada al equipo)
+// Se conserva el historial completo (no se borra al re-correr).
+model ScheduleRun {
+  id                  String   @id @default(cuid())
+  storeId             String
+  store               Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  createdAt           DateTime @default(now())
+  weekStart           DateTime @default(now()) // lunes de la semana que programa
+  status              String   @default("DRAFT") // DRAFT | APPROVED | PUBLISHED
+  approvedAt          DateTime?
+  publishedAt         DateTime?
+  baselineCost        Float
+  baselineHours       Int
+  baselineOvertimeCost Float
+  proposedCost        Float
+  proposedHours       Int
+  savings             Float // MXN
+  savingsPercent      Float
+  savingsOvertime     Float // componente: horas extra evitadas
+  savingsOverstaffing Float // componente: sobrestaffing evitado
+  savingsSunday       Float // componente: diferencia de prima dominical
+  valid               Boolean
+  proposedShifts      ProposedShift[]
+  traces              ConstraintTrace[]
+}
+
+model ProposedShift {
+  id         String      @id @default(cuid())
+  runId      String
+  run        ScheduleRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  day        Int
+  startHour  Int
+  hours      Int
+}
+
+// Nota de trazabilidad de restricciones: cada restricción aplicada por el solver queda registrada
+model ConstraintTrace {
+  id          String      @id @default(cuid())
+  runId       String
+  run         ScheduleRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  code        String
+  description String
+  source      String
+  result      String
+  passed      Boolean
+}
