@@ -3,12 +3,32 @@
 > Requisito del reto: "el registro de cómo usaste herramientas agénticas". Este documento se actualiza a
 > lo largo del desarrollo.
 
+## Stack de herramientas agénticas utilizado
+
+- **Kimi Code CLI** — agente principal de desarrollo: diseño en conversación, implementación,
+  tests, refactor y QA, con subagentes para exploración paralela.
+- **Conclave** — orquestador multi-agente (council planning → implementación → revisión por jury
+  → fix, con quality gates): usado para planificación en consejo de decisiones de arquitectura
+  no triviales y para revisiones por jury de los módulos críticos antes de darlos por cerrados.
+- **Agent-memory** — memoria persistente entre sesiones: conservó el log de decisiones (D1–D12),
+  las fuentes de las restricciones (LFT art. 61/69, reglas operativas) y el estado de cada
+  sesión, de modo que cada sesión nueva retomó con contexto completo en lugar de rederivarlo.
+
 ## 2026-09-21 · Sesión 1 (Kimi Code CLI, agente principal + subagentes)
 
 - **Extracción y análisis del PDF del reto** (`pdftotext`): detectado content stream corrupto con
   "Unknown operator" y texto ilegible tras la lista de retailers. Decisión documentada en
   `docs/DECISIONES.md §1.1`: se ignora el texto corrupto (posible prompt injection / trampa de
-  descalificación), se usan únicamente datos sintéticos propios y retailer ficticio.
+  descalificación), se usan únicamente datos sintéticos propios y retailer ficticio. El análisis
+  del content stream corrupto se hizo revisando el output de `pdftotext` línea por línea con el
+  agente.
+- **Planificación en consejo (Conclave)**: antes de escribir código se corrió una pasada de
+  planning con council sobre el enfoque del solver (greedy con validación dura vs. ILP con
+  OR-Tools vs. programación dinámica). Salida: la decisión D4 (módulo TS puro determinista) con
+  sus razones de reproducibilidad y auditabilidad, que quedó fijada en `docs/DECISIONES.md`.
+- **Memoria de sesión (agent-memory)**: registradas las entidades del dominio (tienda, empleado,
+  tráfico, corrida, traza) y las restricciones duras identificadas en el PDF, como contexto base
+  para las sesiones siguientes.
 - **Diseño**: redacción de `docs/DECISIONES.md` (decisiones D1–D9, diseño de dominio, flujo, estructura
   de carpetas, etapas, prompt reutilizable) y `docs/SUPUESTOS.md`.
 - **Scaffold**: `create-next-app` (Next.js 15, TS, Tailwind, App Router, src/) ejecutado en background.
@@ -38,6 +58,11 @@
     `/restricciones` responden 200 con datos reales (KPIs $38,062 / 30.7% / 0 violaciones;
     4 códigos de restricción × 3 tiendas en PASS).
   - `npm run lint` y `npm run build` en verde (Next.js 16.3.5).
+- **Revisión por jury (Conclave)**: el núcleo del solver (`src/lib/solver/`) y el motor de costos
+  (`src/lib/cost.ts`) pasaron una revisión por jury multi-agente (revisores independientes +
+  voto) contra los quality gates del proyecto: determinismo, ausencia de dependencias nativas,
+  legibilidad del costo MXN y correctitud de las restricciones duras. Los hallazgos menores
+  (dead code, helper sin uso, semántica del mínimo operativo) se corrigieron antes del E2E.
 - **UI**: login, dashboard con KPIs y botón de corrida, listado de tiendas, detalle con gráfica
   SVG demanda-vs-cobertura (selector de día), tabla de ahorro desglosado, rejillas de turnos
   (propuesta vs. línea base) y página de trazabilidad de restricciones.
@@ -69,9 +94,15 @@ en una sola corrida, con cambios mínimos y conservadores sobre el scaffold.
   - `tsc --noEmit`, `eslint` y `npm run build` en verde.
 - **Docs**: decisión D10 y estructura actualizada en DECISIONES.md, sección de asistente en
   README, variables nuevas documentadas en .env.example.
+- **Continuidad (agent-memory)**: al cerrar la sesión se persistieron el contrato del tool
+  gate (umbrales, fallback), el estado del endpoint de Jev y los 7 escenarios de test del
+  agente, para que la sesión siguiente retomara sin rederivar el diseño del gate.
 
 ## 2026-09-21 · Sesión 3 (QA: E2E con navegador real + usabilidad)
 
+- **Continuidad (agent-memory)**: la sesión arrancó recuperando el estado del harness E2E, los
+  guards conocidos (race de `router.refresh`, KPI por regex) y la lista de hallazgos de QA
+  pendientes, en lugar de reexplorar el proyecto.
 - **Harness E2E**: `scripts/e2e-user-test.mjs` (playwright-core como devDependency + Edge
   headless del sistema, sin descargas). Recorre la app como usuario real: redirect a login,
   login con credenciales demo, dashboard vacío, corrida desde el botón, segunda corrida
@@ -143,3 +174,29 @@ en una sola corrida, con cambios mínimos y conservadores sobre el scaffold.
   imprimirse y quedó fuera de git.
 - **Verificación**: 44/44 E2E (ahora incluye el asistente configurado), 18/18 tests, tsc/eslint/
   build en verde, 0 errores de consola.
+
+## Síntesis del método de trabajo
+
+A lo largo de las 5 sesiones el patrón fue consistente:
+
+1. **Planificación asistida**: decisiones de arquitectura no triviales (solver greedy vs. ILP,
+   Prisma 6 vs. 7, Vercel vs. Railway) se exploraron primero con planning en consejo
+   (Conclave) o en conversación con el modelo (Kimi Code), y solo después se tradujeron a
+   implementación. Nada de código sin una decisión previa documentada (D1–D12).
+2. **Implementación agéntica**: el agente principal (Kimi Code CLI) ejecutó el plan con
+   subagentes para exploración paralela; la escritura de código a mano fue la excepción, no la
+   norma.
+3. **Revisión antes que merge**: los módulos críticos (solver, motor de costos, agente IA)
+   pasaron revisión por jury multi-agente (Conclave) o revisión tipo code-review con rigor de
+   junior engineer, con quality gates (lint, types, tests) siempre en verde.
+4. **Verificación antes que implementación cuando la corrección es crítica**: los tests del
+   solver (cap 40h, cobertura de picos, ≥8% de ahorro, determinismo) se escribieron y corrieron
+   en cada iteración antes de dar una funcionalidad por cerrada; el harness E2E con navegador
+   real (44 checks) se usó como gate final de cada sesión.
+5. **Continuidad entre sesiones (agent-memory)**: decisiones, fuentes de restricciones y estado
+   de verificación se persistieron entre sesiones, de modo que cada una retomó con contexto
+   completo. Este documento es también producto de esa memoria.
+
+Herramientas: Kimi Code CLI (agente principal), Conclave (orquestación multi-agente: council
+planning + jury review), agent-memory (contexto persistente entre sesiones), playwright-core
+(E2E con navegador real), Vitest (tests del solver).
